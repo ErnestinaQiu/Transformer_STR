@@ -20,9 +20,10 @@ if proj_dir not in sys.path:
 
 checkpoint_dir = os.path.join(proj_dir, 'checkpoints')
 # fixme: data path configuration
-data_dir = 'path/to/data_lmdb_text_recognition'
+# data_dir = 'path/to/data_lmdb_text_recognition'
+data_dir = 'D:/datasets/data_lmdb_release'
 
-p = re.compile(r'[!"#$%&()*+,/:;<=>?@\\^_`{|}~]')
+p = re.compile(r'[!"#$%&()*+,/:;<=>?@//^_`{|}~]')
 
 
 class Config:

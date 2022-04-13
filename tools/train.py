@@ -7,6 +7,7 @@
 #'''
 import os, sys, time, random
 import torch
+from torchsummary import summary
 import torch.backends.cudnn as cudnn
 from torch.utils.data import DataLoader
 import torch.nn.init as init
@@ -38,10 +39,10 @@ class Config(config.Config):
     train_data = os.path.join(config.data_dir, 'training')
     valid_data = os.path.join(config.data_dir, 'validation')
     saved_model = ''
-    select_data = ['SJ', 'MJ']  # select training data
+    select_data = ['ST', 'MJ']  # select training data
     batch_ratio = [0.5, 0.5]  # assign ratio for each selected data in the batch
     workers = 0
-    batch_size = 192
+    batch_size = 4
     num_iter = 3000000
     valInterval = 2000
     total_data_usage_ratio = 1.0
@@ -58,16 +59,16 @@ def train(cfg):
     if not cfg.data_filtering_off:
         logger.info('Filtering the images containing characters which are not in character')
         logger.info(f'Filtering the images whose label is longer than {cfg.batch_max_length}')
-
+    
     if cfg.sensitive:
         cfg.character = string.digits + string.ascii_letters + cfg.punctuation
         cfg.Name += '_sensitive'
-
+    
     train_dataset = BatchBalancedDataset(cfg.train_data, cfg.batch_max_length,cfg.character,
                                          cfg.select_data, cfg.batch_ratio, cfg.batch_size, cfg.total_data_usage_ratio,
                                          cfg.workers, cfg.sensitive, cfg.rgb, cfg.data_filtering_off, cfg.imgH, cfg.imgW,
                                          cfg.keep_ratio_with_pad)
-
+                    
     AlignCollate_valid = AlignCollate()
     valid_dataset = hierarchical_dataset(cfg.valid_data, cfg.imgH, cfg.imgW, cfg.batch_max_length, cfg.character,
                                          cfg.sensitive, cfg.rgb, cfg.data_filtering_off)
@@ -76,18 +77,18 @@ def train(cfg):
         shuffle=True,
         num_workers=int(cfg.workers),
         collate_fn=AlignCollate_valid, pin_memory=True)
-
+    
     """model"""
     converter = TransLabelConverter(cfg.character, device)
     cfg.num_class = len(converter.character)
     logger.verbose(f'{cfg.num_class}\n{converter.character}')
-
+    
     if cfg.rgb:
         cfg.input_channel = 3
     model = Model(cfg.imgH,cfg.imgW, cfg.input_channel, cfg.output_channel, cfg.hidden_size,
                   cfg.num_fiducial, cfg.num_class, cfg.with_bilstm,
                   device=device)
-
+    
     logger.info('initialize')
     for name, param in model.named_parameters():
         if 'localization_fc2' in name or 'decoder' in name or 'self_attn' in name:
@@ -102,7 +103,7 @@ def train(cfg):
             if 'weight' in name:
                 param.data.fill_(1)
             continue
-
+    
     # data parallel for multi-GPU
     model = torch.nn.DataParallel(model).to(device)
     model.train()
@@ -134,19 +135,27 @@ def train(cfg):
 
     while True:
         image_tensors, labels = train_dataset.get_batch()
+        print('image_tensors.shape: {}, len(labels): {}'.format(image_tensors.shape, len(labels)))
         image = image_tensors.to(device)
         target, length = converter.encode(labels, batch_max_length=cfg.batch_max_length)
 
         preds = model(image)
+        # print('len(preds): {}'.format(len(preds)))
         cost = criterion(preds.view(-1, preds.shape[-1]), target.contiguous().view(-1))
 
+        # debug
+        # print('type(image):{}'.format(type(image)))
+        # print('image.shape:{}'.format(image.shape))
+        # print(model)
+        # summary(model, (192, 1, 32, 100))
+        
         model.zero_grad()
         cost.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)
         optimizer.step()
-
+        
         loss_avg.add(cost)
-
+        
         # validation part
         if i % cfg.valInterval == 0 and i > 0:
             elapsed_time = time.time() - start_time
@@ -156,7 +165,7 @@ def train(cfg):
                 valid_loss, current_accuracy, current_norm_ED, preds, confidence_score, labels, infer_time, length_of_data = validation(
                     model, criterion, valid_loader, converter, device, cfg)
             model.train()
-
+            
             # training loss and validation loss
             loss_log = f'[{i}/{cfg.num_iter}({epoch_size})] Train loss: {loss_avg.val():0.5f},' \
                        f' Valid loss: {valid_loss:0.5f}, Elapsed_time: {elapsed_time:0.5f}'
@@ -165,7 +174,7 @@ def train(cfg):
 
             current_model_log = f'{"Current_accuracy":17s}: {current_accuracy:0.3f}, {"Current_norm_ED":17s}: {current_norm_ED:0.2f}'
             logger.info(current_model_log)
-
+            
             # keep best accuracy model (on valid dataset)
             if current_accuracy > best_accuracy and current_accuracy > 0.65:
                 best_accuracy = current_accuracy

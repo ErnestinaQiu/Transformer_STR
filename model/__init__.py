@@ -29,15 +29,15 @@ class Model(nn.Module):
                  bilstm=True,
                  device=torch.device('cuda:0')):
         super(Model, self).__init__()
-
+        
         logger.info(f'bi-lstm: {bilstm} | device: {device} | num_class: {num_class}')
         self.num_class = num_class
         self.bilstm = bilstm
-
+        
         self.transformation = TPS_STN(num_fiducial, I_size=(imgh, imgw), I_r_size=(imgh, imgw), device=device,
                                       I_channel_num=input_channel)
         self.fe = ResNet50(input_channel, output_channel)
-
+        
         self.adaptive_avg_pool = nn.AdaptiveAvgPool2d((None, 1))
         self.seq = nn.Sequential(BiLSTM(output_channel, hidden_size, hidden_size),
                                  BiLSTM(hidden_size, hidden_size, hidden_size))
@@ -56,6 +56,6 @@ class Model(nn.Module):
 
         if self.bilstm:
             x = self.seq(x)
-
-        pred = self.prediction(x.contiguous())
+        
+        pred = self.prediction(x.contiguous())  # x.contiguous means the elements of it will be adjacent to each other in memory
         return pred

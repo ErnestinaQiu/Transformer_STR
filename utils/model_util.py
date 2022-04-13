@@ -23,6 +23,7 @@ class TPS_STN(nn.Module):
     def __init__(self, F, I_size, I_r_size, device, I_channel_num=1):
         """ Based on RARE TPS
         input:
+            F: num of fiducial
             batch_I: Batch Input Image [batch_size x I_channel_num x I_height x I_width]
             I_size : (height, width) of the input image I
             I_r_size : (height, width) of the rectified image I_r
@@ -31,15 +32,17 @@ class TPS_STN(nn.Module):
             batch_I_r: rectified image [batch_size x I_channel_num x I_r_height x I_r_width]
         """
         super(TPS_STN, self).__init__()
-        self.F = F
+        self.F = F   # num of fiducial
         self.I_size = I_size
         self.I_r_size = I_r_size  # = (I_r_height, I_r_width)
         self.I_channel_num = I_channel_num
         self.LocalizationNetwork = LocalizationNetwork(self.F, self.I_channel_num)
         self.GridGenerator = GridGenerator(self.F, self.I_r_size, device)
-
+    
     def forward(self, batch_I):
+        # generate the fiducial points inside the original image, the top line and the bottom lines
         batch_C_prime = self.LocalizationNetwork(batch_I)  # batch_size x K x 2
+        # generate the 
         build_P_prime = self.GridGenerator.build_P_prime(batch_C_prime)  # batch_size x n (= I_r_width x I_r_height) x 2
         build_P_prime_reshape = build_P_prime.reshape([build_P_prime.size(0), self.I_r_size[0], self.I_r_size[1], 2])
         batch_I_r = F.grid_sample(batch_I, build_P_prime_reshape, padding_mode='border')
@@ -65,10 +68,10 @@ class LocalizationNetwork(nn.Module):
             nn.Conv2d(256, 512, 3, 1, 1, bias=False), nn.BatchNorm2d(512), nn.ReLU(True),
             nn.AdaptiveAvgPool2d(1)  # batch_size x 512
         )
-
+        
         self.localization_fc1 = nn.Sequential(nn.Linear(512, 256), nn.ReLU(True))
         self.localization_fc2 = nn.Linear(256, self.F * 2)
-
+        
         # Init fc2 in LocalizationNetwork
         self.localization_fc2.weight.data.fill_(0)
         """ see RARE paper Fig. 6 (a) """
@@ -79,7 +82,7 @@ class LocalizationNetwork(nn.Module):
         ctrl_pts_bottom = np.stack([ctrl_pts_x, ctrl_pts_y_bottom], axis=1)
         initial_bias = np.concatenate([ctrl_pts_top, ctrl_pts_bottom], axis=0)
         self.localization_fc2.bias.data = torch.from_numpy(initial_bias).float().view(-1)
-
+    
     def forward(self, batch_I):
         """
         input:     batch_I : Batch Input Image [batch_size x I_channel_num x I_height x I_width]
@@ -89,11 +92,11 @@ class LocalizationNetwork(nn.Module):
         features = self.conv(batch_I).view(batch_size, -1)
         batch_C_prime = self.localization_fc2(self.localization_fc1(features)).view(batch_size, self.F, 2)
         return batch_C_prime
-
-
+    
+    
 class GridGenerator(nn.Module):
     """ Grid Generator of RARE, which produces P_prime by multipling T with P """
-
+    
     def __init__(self, F, I_r_size, device):
         """ Generate P_hat and inv_delta_C for later """
         super(GridGenerator, self).__init__()
@@ -109,7 +112,7 @@ class GridGenerator(nn.Module):
         ## for fine-tuning with different image width, you may use below instead of self.register_buffer
         #self.inv_delta_C = torch.tensor(self._build_inv_delta_C(self.F, self.C)).float().cuda()  # F+3 x F+3
         #self.P_hat = torch.tensor(self._build_P_hat(self.F, self.C, self.P)).float().cuda()  # n x F+3
-
+    
     def _build_C(self, F):
         """ Return coordinates of fiducial points in I_r; C """
         ctrl_pts_x = np.linspace(-1.0, 1.0, int(F / 2))
@@ -119,7 +122,7 @@ class GridGenerator(nn.Module):
         ctrl_pts_bottom = np.stack([ctrl_pts_x, ctrl_pts_y_bottom], axis=1)
         C = np.concatenate([ctrl_pts_top, ctrl_pts_bottom], axis=0)
         return C  # F x 2
-
+    
     def _build_inv_delta_C(self, F, C):
         """ Return inv_delta_C which is needed to calculate T """
         hat_C = np.zeros((F, F), dtype=float)  # F x F
@@ -141,7 +144,7 @@ class GridGenerator(nn.Module):
         )
         inv_delta_C = np.linalg.inv(delta_C)
         return inv_delta_C  # F+3 x F+3
-
+    
     def _build_P(self, I_r_width, I_r_height):
         I_r_grid_x = (np.arange(-I_r_width, I_r_width, 2) + 1.0) / I_r_width  # self.I_r_width
         I_r_grid_y = (np.arange(-I_r_height, I_r_height, 2) + 1.0) / I_r_height  # self.I_r_height
@@ -150,7 +153,7 @@ class GridGenerator(nn.Module):
             axis=2
         )
         return P.reshape([-1, 2])  # n (= self.I_r_width x self.I_r_height) x 2
-
+    
     def _build_P_hat(self, F, C, P):
         n = P.shape[0]  # n (= self.I_r_width x self.I_r_height)
         P_tile = np.tile(np.expand_dims(P, axis=1), (1, F, 1))  # n x 2 -> n x 1 x 2 -> n x F x 2
@@ -160,7 +163,7 @@ class GridGenerator(nn.Module):
         rbf = np.multiply(np.square(rbf_norm), np.log(rbf_norm + self.eps))  # n x F
         P_hat = np.concatenate([np.ones((n, 1)), P, rbf], axis=1)
         return P_hat  # n x F+3
-
+        
     def build_P_prime(self, batch_C_prime):
         """ Generate Grid from batch_C_prime [batch_size x F x 2] """
         batch_size = batch_C_prime.size(0)
@@ -171,7 +174,6 @@ class GridGenerator(nn.Module):
         batch_T = torch.bmm(batch_inv_delta_C, batch_C_prime_with_zeros)  # batch_size x F+3 x 2
         batch_P_prime = torch.bmm(batch_P_hat, batch_T)  # batch_size x n x 2
         return batch_P_prime  # batch_size x n x 2
-
 
 class BasicBlockRes(nn.Module):
     expansion = 1
@@ -339,13 +341,13 @@ def _get_clones(module, N):
 
 class TransformerEncoder(nn.Module):
     __constants__ = ['norm']
-
+    
     def __init__(self, encoder_layer, num_layers, norm=None):
         super(TransformerEncoder, self).__init__()
         self.layers = _get_clones(encoder_layer, num_layers)
         self.num_layers = num_layers
         self.norm = norm
-
+    
     def forward(self, src, mask=None, src_key_padding_mask=None):
         # type: (Tensor, Optional[Tensor], Optional[Tensor]) -> Tensor
         r"""Pass the input through the encoder layers in turn.
@@ -523,6 +525,7 @@ class PositionalEncoding(nn.Module):
 class Transformer(nn.Module):
 
     def __init__(self, ntoken, ninp, nhid=256, nhead=2, nlayers=2, dropout=0.2):
+        """@ntoken, output num_class @ninp, size of each input sample """
         super(Transformer, self).__init__()
         self.src_mask = None
         self.pos_encoder = PositionalEncoding(ninp, dropout)
@@ -530,19 +533,19 @@ class Transformer(nn.Module):
         self.transformer_encoder = TransformerEncoder(encoder_layers, nlayers)
         self.ninp = ninp
         self.decoder = nn.Linear(ninp, ntoken)
-
+    
         self.init_weights()
-
+    
     def _generate_square_subsequent_mask(self, sz):
         mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
         mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
         return mask
-
+    
     def init_weights(self):
         initrange = 0.1
         self.decoder.bias.data.zero_()
         self.decoder.weight.data.uniform_(-initrange, initrange)
-
+    
     def forward(self, src):
         if self.src_mask is None or self.src_mask.size(0) != len(src):
             mask = self._generate_square_subsequent_mask(len(src)).to(src.device)

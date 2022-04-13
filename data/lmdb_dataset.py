@@ -13,9 +13,7 @@ from torch.utils.data import Dataset, ConcatDataset, Subset
 from utils.misc import ResizeNormalize, NormalizePAD
 import config
 
-
 logger = config.logger
-
 
 def _accumulate(iterable, fn=lambda x, y: x + y):
     '''Return running totals'''
@@ -45,8 +43,8 @@ class AlignCollate:
         if self.keep_ratio_with_pad:
             resized_max_w = self.imgw
             input_channel = 3 if images[0].mode == 'RGB' else 1
-            transform = NormalizePAD((input_channel, self.imgh, resized_max_w))
-
+            transform = NormalizePAD((input_channel, self.imgh, resized_max_w)) 
+            
             resized_images = []
             for image in images:
                 w, h = image.size
@@ -55,7 +53,7 @@ class AlignCollate:
                     resized_w = self.imgw
                 else:
                     resized_w = math.ceil(self.imgh * ratio)
-
+                
                 resized_image = image.resize((resized_w, self.imgh), Image.BICUBIC)
                 resized_images.append(transform(resized_image))
             image_tensors = torch.cat([t.unsqueeze(0) for t in resized_images], 0)
@@ -64,7 +62,6 @@ class AlignCollate:
             image_tensors = [transform(i) for i in images]
             image_tensors = torch.cat([t.unsqueeze(0) for t in image_tensors], 0)
         return image_tensors, labels
-
 
 class LmdbDataset(Dataset):
     def __init__(self, root, imgh, imgw, batch_max_length, character, sensitive, rgb, data_filtering_off=False):
@@ -82,7 +79,7 @@ class LmdbDataset(Dataset):
 
         with self.env.begin(write=False) as txn:
             self.nsamples = int(txn.get('num-samples'.encode()))
-
+            
             if data_filtering_off:
                 self.filtered_index_list = [index + 1 for index in range(self.nsamples)]
             else:
@@ -91,7 +88,7 @@ class LmdbDataset(Dataset):
                     index += 1
                     label_key = 'label-%09d'.encode() % index
                     label = txn.get(label_key).decode('utf-8')
-
+                    
                     if len(label) > batch_max_length:
                         continue
                     out_of_char = f'[^{self.character}]'
@@ -145,20 +142,32 @@ def hierarchical_dataset(root, imgh, imgw, batch_max_length,character,
                          sensitive=False, rgb=False, data_filtering_off=False, select_data='/'):
     dataset_list = []
     for dirpath, dirnames, filenames in os.walk(root + '/'):
+        print('dirpath:{}, dirnames:{}, filenames:{}'.format(dirpath, dirnames, filenames))
         if not dirnames:
             select_flag = False
             for select_d in select_data:
                 if select_d in dirpath:
                     select_flag = True
                     break
+            # debug
+            print('select_d:{}, select_data:{}'.format(select_d, select_data))
+            print('select_flag: {}'.format(select_flag))
             if select_flag:
                 dataset = LmdbDataset(dirpath,
                                       imgh=imgh,
                                       imgw=imgw,
                                       batch_max_length=batch_max_length,
                                       character=character,sensitive=sensitive,rgb=rgb, data_filtering_off=data_filtering_off)
+                # debug
+                print(type(dataset))
+                print(len(dataset))
                 logger.info(f'sub-directory:\t{os.path.relpath(dirpath, root)}\t num samples: {len(dataset)}')
                 dataset_list.append(dataset)
+                # debug
+                print('dirpath:{}, dirnames:{}, filenames:{}'.format(dirpath, dirnames, filenames))
+    # # debug
+    # print(type(dataset_list))
+    # print(len(dataset_list))
     return ConcatDataset(dataset_list)
 
 
@@ -187,7 +196,7 @@ class BatchBalancedDataset:
                                             character,sensitive,rgb,data_filtering_off,
                                             select_data=[selected_d])
             total_number_dataset = len(_dataset)
-
+            
             """
             total_data_usage_ratio = 1 indicates 100% usage, and 0.2 indicates 20% usage.
             """

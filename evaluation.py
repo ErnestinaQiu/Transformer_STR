@@ -50,34 +50,38 @@ class Config(config.Config):
 def create_model(cfg: Config):
     """model"""
     cfg.sensitive = True if 'sensitive' in cfg.saved_model else False
-
+    
     if cfg.sensitive:
         cfg.character = string.digits + string.ascii_letters + cfg.punctuation
-
+    
     converter = TransLabelConverter(cfg.character, device)
     cfg.num_class = len(converter.character)
-
+    
     if cfg.rgb:
         cfg.input_channel = 3
     model = Model(cfg.imgH, cfg.imgW, cfg.input_channel, cfg.output_channel, cfg.hidden_size,
                   cfg.num_fiducial, cfg.num_class, cfg.with_bilstm, device=device)
-
+    
     # data parallel for multi-GPU
     model = torch.nn.DataParallel(model).to(device)
     assert os.path.exists(cfg.saved_model), FileNotFoundError(f'{cfg.saved_model}')
-
+    
     if os.path.isfile(cfg.saved_model):
         logger.info(f'loading pretrained model from {os.path.relpath(cfg.saved_model, os.path.dirname(__file__))}')
         model.load_state_dict(torch.load(cfg.saved_model, map_location=device))
-
+    
     model.eval()
 
     return model, converter
 
 
 def validation(cfg: Config,  model, converter):
+    """ the 'cfg: Config' here is used as a hint to the user that, the parameter can only be class Config, but it will not check it while execution. """
+    print(type)
+    
     cfg.sensitive = True if 'sensitive' in cfg.saved_model else False
     AlignCollate_valid = AlignCollate()
+    
     valid_dataset = hierarchical_dataset(cfg.valid_data, cfg.imgH, cfg.imgW, cfg.batch_max_length, cfg.character,
                                          cfg.sensitive, cfg.rgb, cfg.data_filtering_off)
     valid_loader = DataLoader(
@@ -85,9 +89,9 @@ def validation(cfg: Config,  model, converter):
         shuffle=False,
         num_workers=int(cfg.workers),
         collate_fn=AlignCollate_valid, pin_memory=True)
-
+    
     model.eval()
-
+    
     n_correct = 0
     length_of_data = 0
 
@@ -116,15 +120,15 @@ def validation(cfg: Config,  model, converter):
             pred_EOS = pred.find('<eos>')
             pred = pred[:pred_EOS]
             pred_max_prob = pred_max_prob[:pred_EOS]
-
+            
             try:
                 confidence_score = pred_max_prob.cumprod(dim=0)[-1]
             except:
                 confidence_score = 0.0
-
+            
             if not cfg.sensitive:
                 pred = pred.lower()
-
+            
             # fixme: filter punctuation
             if cfg.filter_punctuation:
                 pred = re.sub(p, '', pred)
@@ -134,6 +138,7 @@ def validation(cfg: Config,  model, converter):
                 n_correct += 1
 
     accuracy = n_correct / float(length_of_data)
+    print('length_of_data: {}'.format(length_of_data))
 
     return accuracy
 
@@ -142,9 +147,9 @@ def eval_cute80(cute80_data_dir):
     cfg = Config()
     cfg.saved_model = os.path.join(cfg.checkpoint_dir,
                                    'Transformer_STR_CUTE80_pretrained.pth')
-
+    
     model, converter = create_model(cfg)
-
+    
     cfg.valid_data = cute80_data_dir
     acc = validation(cfg, model, converter)
 
@@ -154,7 +159,6 @@ def eval_cute80(cute80_data_dir):
 if __name__ == '__main__':
     cudnn.benchmark = True
     cudnn.deterministic = True
-
+    
     cute80_dir = os.path.join(config.data_dir, 'evaluation', 'CUTE80')
     eval_cute80(cute80_dir)
-
